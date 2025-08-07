@@ -85,6 +85,7 @@ fn check_winner(board: &[char; 9]) -> Option<char> {
         [0,3,6], [1,4,7], [2,5,8], // vertical
         [0,4,8], [2,4,6],          // diagonal
     ];
+    println!("hello");
 
     for &line in &wins {
         if board[line[0]] == board[line[1]] &&
