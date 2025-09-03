@@ -16,9 +16,9 @@ A console-based Tic-Tac-Toe game built in **Rust 1.70+**, featuring:
   - PvAI: Human vs AI (Easy, Hard)  
 
 - **AI Levels**  
-  - Random → Picks any available move  
-  - Easy → Blocks immediate threats, otherwise random  
-  - Hard → Perfect minimax algorithm (cannot be beaten)  
+  - Easy → Picks any available move  
+  - Hard → Blocks immediate threats, otherwise random  
+  
 
 - **Gameplay Enhancements**  
   - Scoreboard persists for session  
