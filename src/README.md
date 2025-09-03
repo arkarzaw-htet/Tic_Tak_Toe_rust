@@ -1,6 +1,4 @@
-Got it 👍 Here’s a clean **README.md** you can put in your project root:
 
-````markdown
 # 🎮 Tic-Tac-Toe  (Rust Edition)
 
 A console-based Tic-Tac-Toe game built in **Rust 1.70+**, featuring:
