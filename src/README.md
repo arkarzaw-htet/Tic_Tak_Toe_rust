@@ -13,7 +13,7 @@ A console-based Tic-Tac-Toe game built in **Rust 1.70+**, featuring:
 ## 🚀 Features
 - **Multiple Game Modes**  
   - PvP: Two human players  
-  - PvAI: Human vs AI (Random, Easy, Hard)  
+  - PvAI: Human vs AI (Easy, Hard)  
 
 - **AI Levels**  
   - Random → Picks any available move  
