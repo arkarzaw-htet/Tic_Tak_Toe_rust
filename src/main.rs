@@ -1,5 +1,5 @@
 // ======================================
-// Tic Tac Toe — Crossterm (Minimized)
+// Tic Tac Toe — Crossterm
 // PVP / AI (Easy/Hard), Winner Highlight, Scoreboard
 // Rust 2024 Edition
 // ======================================
@@ -22,17 +22,17 @@ const PLAYER_X: char = 'X';
 const PLAYER_O: char = 'O';
 const EMPTY_CELLS: [char; 9] = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
-const WIN_LINES: [[usize; 3]; 8] = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-];
-
 #[derive(Clone, Copy, PartialEq)]
-enum Difficulty { Easy, Hard }
+enum Difficulty {
+    Easy,
+    Hard,
+}
 
 #[derive(Clone, Copy)]
-enum GameMode { Friend, AI(Difficulty, bool) } // (difficulty, player_first)
+enum GameMode {
+    Friend,
+    AI(Difficulty, bool), // (difficulty, player_first)
+}
 
 // ======================================
 // MAIN
@@ -41,52 +41,65 @@ enum GameMode { Friend, AI(Difficulty, bool) } // (difficulty, player_first)
 fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
-    let (mut score_x, mut score_o, mut score_d) = (0, 0, 0);
+
+    let mut score_player_x = 0;
+    let mut score_player_o = 0;
+    let mut score_draws = 0;
 
     loop {
         let mut board = EMPTY_CELLS;
-        let mut current = PLAYER_X;
+        let mut current_player = PLAYER_X;
 
-        show_welcome(&mut stdout)?;
-        let mode = ask_game_mode(&mut stdout)?;
+        show_welcome_screen(&mut stdout)?;
+        let game_mode = ask_game_mode(&mut stdout)?;
 
+        // Game loop
         loop {
-            draw_board(&board, &mut stdout, None)?;
-            print_turn_hint(&mut stdout, mode, current)?;
+            draw_board(&board, &mut stdout)?;
+            print_turn_hint(&mut stdout, game_mode, current_player)?;
 
-            let pos = if is_human_turn(mode, current) {
-                get_human_move(&mut stdout, &board)?
+            let pos = if is_human_turn(game_mode, current_player) {
+                get_human_move(&mut stdout, &board, current_player)?
             } else {
-                let ai_mark = if let GameMode::AI(_, player_first) = mode {
-                    if player_first { PLAYER_O } else { PLAYER_X }
-                } else { unreachable!() };
-                match mode {
-                    GameMode::AI(diff, _) => get_ai_move(&board, ai_mark, diff),
-                    _ => unreachable!(),
+                match game_mode {
+                    GameMode::AI(difficulty, player_first) => {
+                        let _computer_mark = if player_first { PLAYER_O } else { PLAYER_X };
+                        match difficulty {
+                            Difficulty::Easy => get_ai_move_random(&board),
+                            Difficulty::Hard => get_ai_move_blocking(&board),
+                        }
+                    }
+                    GameMode::Friend => unreachable!(),
                 }
             };
 
-            board[pos] = current;
+            board[pos] = current_player;
 
             if let Some((winner, line)) = check_winner(&board) {
-                draw_board(&board, &mut stdout, Some(&line))?;
-                print_message(&mut stdout, &format!("Player {} wins! 🎉", winner))?;
-                if winner == PLAYER_X { score_x += 1 } else { score_o += 1 }
+                draw_board_highlight(&board, &mut stdout, &line)?;
+                print_winner(&mut stdout, winner)?;
+                if winner == PLAYER_X {
+                    score_player_x += 1;
+                } else {
+                    score_player_o += 1;
+                }
                 break;
             }
 
             if is_draw(&board) {
-                draw_board(&board, &mut stdout, None)?;
-                print_message(&mut stdout, "It's a draw! 🤝")?;
-                score_d += 1;
+                draw_board(&board, &mut stdout)?;
+                print_draw(&mut stdout)?;
+                score_draws += 1;
                 break;
             }
 
-            current = switch_player(current);
+            current_player = switch_player(current_player);
         }
 
-        print_message(&mut stdout, &format!("Score => X: {} | O: {} | Draws: {}", score_x, score_o, score_d))?;
-        if !ask_yesno(&mut stdout, "Play again? (y/n): ")? { break; }
+        print_scoreboard(&mut stdout, score_player_x, score_player_o, score_draws)?;
+        if !ask_replay(&mut stdout)? {
+            break;
+        }
     }
 
     disable_raw_mode()?;
@@ -97,104 +110,296 @@ fn main() -> Result<()> {
 // GAME FLOW
 // ======================================
 
-fn show_welcome(stdout: &mut Stdout) -> Result<()> {
+fn show_welcome_screen(stdout: &mut Stdout) -> Result<()> {
     execute!(stdout, Clear(ClearType::All))?;
     queue!(stdout, MoveTo(8, 0), Print("==== Welcome to Tic Tac Toe ===="))?;
-    queue!(stdout, MoveTo(8, 2), Print("Controls: press 1–9 to place your mark."))?;
-    queue!(stdout, MoveTo(8, 3), Print("Win by getting 3 in a row."))?;
+    queue!(stdout, MoveTo(8, 2), Print("Controls: press number keys 1–9 to place your mark."))?;
+    queue!(stdout, MoveTo(8, 3), Print("Win by getting 3 in a row (rows, columns, diagonals)."))?;
     queue!(stdout, MoveTo(8, 5), Print("Press any key to continue..."))?;
     stdout.flush()?;
-    read()?;
+    read()?; // wait any key
     Ok(())
 }
 
-fn ask_choice(stdout: &mut Stdout, prompt: &str, valid: &[(char, char)]) -> Result<char> {
-    queue!(stdout, MoveTo(0, 10), Print(prompt))?;
+fn ask_game_mode(stdout: &mut Stdout) -> Result<GameMode> {
+    execute!(stdout, Clear(ClearType::All))?;
+    queue!(stdout, MoveTo(0, 0), Print("Tic Tac Toe\n\n"))?;
+    queue!(stdout, MoveTo(0, 2), Print("Play with a friend (f) or AI (a)? "))?;
+    stdout.flush()?;
+
+    loop {
+        if let Event::Key(event) = read()? {
+            if let KeyCode::Char(c) = event.code {
+                match c {
+                    'f' | 'F' => return Ok(GameMode::Friend),
+                    'a' | 'A' => {
+                        let difficulty = ask_difficulty(stdout)?;
+                        let player_first = ask_first_player(stdout)?;
+                        return Ok(GameMode::AI(difficulty, player_first));
+                    }
+                    _ => {
+                        queue!(stdout, Print("\nInvalid input. Type f or a: "))?;
+                        stdout.flush()?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn ask_difficulty(stdout: &mut Stdout) -> Result<Difficulty> {
+    queue!(stdout, MoveTo(0, 4), Print("Select difficulty: (e)asy or (h)ard: "))?;
     stdout.flush()?;
     loop {
         if let Event::Key(event) = read()? {
             if let KeyCode::Char(c) = event.code {
-                for &(opt, ret) in valid {
-                    if c.eq_ignore_ascii_case(&opt) { return Ok(ret); }
+                match c {
+                    'e' | 'E' => return Ok(Difficulty::Easy),
+                    'h' | 'H' => return Ok(Difficulty::Hard),
+                    _ => {
+                        queue!(stdout, Print("\nInvalid input. Type e or h: "))?;
+                        stdout.flush()?;
+                    }
                 }
             }
         }
-        queue!(stdout, Print("\nInvalid input. Try again: "))?;
-        stdout.flush()?;
     }
 }
 
-fn ask_game_mode(stdout: &mut Stdout) -> Result<GameMode> {
-    let c = ask_choice(stdout, "Friend (f) or AI (a)? ", &[('f','f'),('a','a')])?;
-    if c == 'f' { return Ok(GameMode::Friend); }
-    let d = ask_choice(stdout, "Difficulty (e=easy, h=hard): ", &[('e','e'),('h','h')])?;
-    let diff = if d=='e' { Difficulty::Easy } else { Difficulty::Hard };
-    let first = ask_choice(stdout, "Who first? (p=player, c=computer): ", &[('p','p'),('c','c')])?;
-    Ok(GameMode::AI(diff, first=='p'))
+fn ask_first_player(stdout: &mut Stdout) -> Result<bool> {
+    queue!(
+        stdout,
+        MoveTo(0, 6),
+        Print("Who goes first? (p = player, c = computer): ")
+    )?;
+    stdout.flush()?;
+    loop {
+        if let Event::Key(event) = read()? {
+            if let KeyCode::Char(c) = event.code {
+                match c {
+                    'p' | 'P' => return Ok(true),
+                    'c' | 'C' => return Ok(false),
+                    _ => {
+                        queue!(stdout, Print("\nInvalid input. Type p or c: "))?;
+                        stdout.flush()?;
+                    }
+                }
+            }
+        }
+    }
 }
 
-fn ask_yesno(stdout: &mut Stdout, prompt: &str) -> Result<bool> {
-    let c = ask_choice(stdout, prompt, &[('y','y'),('n','n')])?;
-    Ok(c=='y')
-}
-
-fn is_human_turn(mode: GameMode, current: char) -> bool {
-    match mode {
+fn is_human_turn(game_mode: GameMode, current: char) -> bool {
+    match game_mode {
         GameMode::Friend => true,
-        GameMode::AI(_, player_first) => if player_first { current==PLAYER_X } else { current==PLAYER_O }
+        GameMode::AI(_difficulty, player_first) => {
+            if player_first {
+                current == PLAYER_X
+            } else {
+                current == PLAYER_O
+            }
+        }
     }
 }
 
-fn switch_player(c: char) -> char { if c==PLAYER_X { PLAYER_O } else { PLAYER_X } }
-fn is_draw(board: &[char;9]) -> bool { board.iter().all(|&c| c==PLAYER_X || c==PLAYER_O) }
+fn switch_player(current: char) -> char {
+    if current == PLAYER_X {
+        PLAYER_O
+    } else {
+        PLAYER_X
+    }
+}
+
+fn is_draw(board: &[char; 9]) -> bool {
+    board.iter().all(|&c| c == PLAYER_X || c == PLAYER_O)
+}
+
+fn ask_replay(stdout: &mut Stdout) -> Result<bool> {
+    queue!(stdout, Print("\nPlay again? (y/n): "))?;
+    stdout.flush()?;
+    loop {
+        if let Event::Key(event) = read()? {
+            if let KeyCode::Char(c) = event.code {
+                match c {
+                    'y' | 'Y' => return Ok(true),
+                    'n' | 'N' => return Ok(false),
+                    _ => {
+                        queue!(stdout, Print("\nInvalid input. Type y or n: "))?;
+                        stdout.flush()?;
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ======================================
 // DRAWING
 // ======================================
 
-fn draw_board(board: &[char; 9], stdout: &mut Stdout, highlight: Option<&[usize; 3]>) -> Result<()> {
+fn draw_board(board: &[char; 9], stdout: &mut Stdout) -> Result<()> {
     execute!(stdout, Clear(ClearType::All))?;
-    queue!(stdout, MoveTo(0, 0), Print("Tic Tac Toe"))?;
+    queue!(stdout, MoveTo(0, 0), Print("Tic Tac Toe\n"))?;
+    queue!(stdout, MoveTo(0, 1), Print("========================\n"))?;
 
     for row in 0..3 {
-        if row > 0 { queue!(stdout, MoveTo(0, row as u16 * 2 + 2), Print("---+---+---"))?; }
-        let y = row as u16 * 2 + 3;
+        if row > 0 {
+            queue!(stdout, MoveTo(0, (row as u16) * 2 + 2), Print("---+---+---"))?;
+        }
+        let y = (row as u16) * 2 + 3;
         for col in 0..3 {
-            let idx = row*3+col;
-            let x = [1,5,9][col];
-            let mark = board[idx];
-            if highlight.map_or(false, |h| h.contains(&idx)) {
-                queue!(stdout, MoveTo(x, y), SetForegroundColor(Color::Green), Print(mark), ResetColor)?;
-            } else {
-                queue!(stdout, MoveTo(x, y), Print(mark))?;
+            let idx = row * 3 + col;
+            let x = match col {
+                0 => 1,
+                1 => 5,
+                _ => 9,
+            } as u16;
+
+            let color = match board[idx] {
+                PLAYER_X => Color::Red,
+                PLAYER_O => Color::Blue,
+                _ => Color::White,
+            };
+
+            queue!(
+                stdout,
+                MoveTo(x, y),
+                SetForegroundColor(color),
+                Print(board[idx]),
+                ResetColor
+            )?;
+
+            if col < 2 {
+                let bar_x = match col {
+                    0 => 3,
+                    _ => 7,
+                } as u16;
+                queue!(stdout, MoveTo(bar_x, y), Print("|"))?;
             }
-            if col<2 { queue!(stdout, MoveTo([3,7][col], y), Print("|"))?; }
         }
     }
+
+    stdout.flush()?;
+    Ok(())
+}
+
+fn draw_board_highlight(board: &[char; 9], stdout: &mut Stdout, line: &[usize; 3]) -> Result<()> {
+    execute!(stdout, Clear(ClearType::All))?;
+    queue!(stdout, MoveTo(0, 0), Print("Tic Tac Toe\n"))?;
+    queue!(stdout, MoveTo(0, 1), Print("========================\n"))?;
+
+    for row in 0..3 {
+        if row > 0 {
+            queue!(stdout, MoveTo(0, (row as u16) * 2 + 2), Print("---+---+---"))?;
+        }
+        let y = (row as u16) * 2 + 3;
+        for col in 0..3 {
+            let idx = row * 3 + col;
+            let x = match col {
+                0 => 1,
+                1 => 5,
+                _ => 9,
+            } as u16;
+
+            let color = if line.contains(&idx) {
+                Color::Green
+            } else {
+                match board[idx] {
+                    PLAYER_X => Color::Red,
+                    PLAYER_O => Color::Blue,
+                    _ => Color::White,
+                }
+            };
+
+            queue!(
+                stdout,
+                MoveTo(x, y),
+                SetForegroundColor(color),
+                Print(board[idx]),
+                ResetColor
+            )?;
+
+            if col < 2 {
+                let bar_x = match col {
+                    0 => 3,
+                    _ => 7,
+                } as u16;
+                queue!(stdout, MoveTo(bar_x, y), Print("|"))?;
+            }
+        }
+    }
+
     stdout.flush()?;
     Ok(())
 }
 
 fn print_turn_hint(stdout: &mut Stdout, mode: GameMode, current: char) -> Result<()> {
-    let msg = match mode {
-        GameMode::Friend => format!("Player {}'s turn (1-9): ", current),
-        GameMode::AI(_, first) => {
+    let hint = match mode {
+        GameMode::Friend => format!("Player {}, enter position (1-9): ", current),
+        GameMode::AI(_d, player_first) => {
             if is_human_turn(mode, current) {
-                let mark = if first { PLAYER_X } else { PLAYER_O };
-                format!("Your turn ({}). Enter 1-9: ", mark)
+                let you_mark = if player_first { PLAYER_X } else { PLAYER_O };
+                format!("Your turn ({}). Enter position (1-9): ", you_mark)
             } else {
-                let mark = if first { PLAYER_O } else { PLAYER_X };
-                format!("Computer's turn ({})...", mark)
+                let comp_mark = if player_first { PLAYER_O } else { PLAYER_X };
+                format!("Computer's turn ({})...", comp_mark)
             }
         }
     };
-    queue!(stdout, MoveTo(0, 10), Print(msg))?;
+
+    let color = if is_human_turn(mode, current) {
+        Color::Yellow
+    } else {
+        Color::Magenta
+    };
+
+    queue!(
+        stdout,
+        MoveTo(0, 10),
+        SetForegroundColor(color),
+        Print(hint),
+        ResetColor
+    )?;
     stdout.flush()?;
     Ok(())
 }
 
-fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
-    queue!(stdout, MoveTo(0, 12), Print(format!("\n{}\n", msg)))?;
+fn print_winner(stdout: &mut Stdout, winner: char) -> Result<()> {
+    let color = if winner == PLAYER_X { Color::Red } else { Color::Blue };
+    queue!(
+        stdout,
+        MoveTo(0, 12),
+        SetForegroundColor(color),
+        Print(format!("\nPlayer {} wins! 🎉\n", winner)),
+        ResetColor
+    )?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn print_draw(stdout: &mut Stdout) -> Result<()> {
+    queue!(
+        stdout,
+        MoveTo(0, 12),
+        SetForegroundColor(Color::Yellow),
+        Print("\nIt's a draw! 🤝\n"),
+        ResetColor
+    )?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn print_scoreboard(stdout: &mut Stdout, px: i32, po: i32, draws: i32) -> Result<()> {
+    queue!(
+        stdout,
+        SetForegroundColor(Color::Red),
+        Print(format!("X: {} ", px)),
+        SetForegroundColor(Color::Blue),
+        Print(format!("O: {} ", po)),
+        SetForegroundColor(Color::Yellow),
+        Print(format!("Draws: {}\n", draws)),
+        ResetColor
+    )?;
     stdout.flush()?;
     Ok(())
 }
@@ -203,21 +408,20 @@ fn print_message(stdout: &mut Stdout, msg: &str) -> Result<()> {
 // INPUT
 // ======================================
 
-fn get_human_move(stdout: &mut Stdout, board: &[char;9]) -> Result<usize> {
-    use crossterm::cursor::MoveToNextLine;
+fn get_human_move(stdout: &mut Stdout, board: &[char; 9], _player: char) -> Result<usize> {
     stdout.flush()?;
     loop {
         if let Event::Key(event) = read()? {
             if let KeyCode::Char(c) = event.code {
                 if let Some(d) = c.to_digit(10) {
-                    let idx = (d-1) as usize;
-                    if idx<9 && board[idx]!=PLAYER_X && board[idx]!=PLAYER_O {
+                    let idx = (d - 1) as usize;
+                    if idx < 9 && board[idx] != PLAYER_X && board[idx] != PLAYER_O {
                         return Ok(idx);
                     }
                 }
             }
         }
-        queue!(stdout, MoveToNextLine(1), Print("Invalid. Try again: "))?;
+        queue!(stdout, Print("\nInvalid input or cell occupied. Try again: "))?;
         stdout.flush()?;
     }
 }
@@ -226,42 +430,68 @@ fn get_human_move(stdout: &mut Stdout, board: &[char;9]) -> Result<usize> {
 // AI
 // ======================================
 
-fn get_ai_move(board: &[char;9], ai_mark: char, diff: Difficulty) -> usize {
-    match diff {
-        Difficulty::Easy => get_ai_move_random(board),
-        Difficulty::Hard => {
-            let opp = if ai_mark==PLAYER_X { PLAYER_O } else { PLAYER_X };
-            for &mark in &[ai_mark, opp] {
-                for line in WIN_LINES {
-                    let cells = [board[line[0]], board[line[1]], board[line[2]]];
-                    if cells.iter().filter(|&&c| c==mark).count()==2 {
-                        if let Some(&i) = line.iter().find(|&&i| board[i]!=PLAYER_X && board[i]!=PLAYER_O) {
-                            return i;
-                        }
-                    }
-                }
-            }
-            get_ai_move_random(board)
-        }
-    }
+fn get_ai_move_random(board: &[char; 9]) -> usize {
+    let mut rng = rand::thread_rng();
+    board
+        .iter()
+        .enumerate()
+        .filter(|&(_, &c)| c != PLAYER_X && c != PLAYER_O)
+        .map(|(i, _)| i)
+        .choose(&mut rng)
+        .unwrap()
 }
 
-fn get_ai_move_random(board: &[char;9]) -> usize {
-    let mut rng = rand::thread_rng();
-    board.iter().enumerate()
-        .filter(|&(_, &c)| c!=PLAYER_X && c!=PLAYER_O)
-        .map(|(i, _)| i)
-        .choose(&mut rng).unwrap()
+fn get_ai_move_blocking(board: &[char; 9]) -> usize {
+    let wins = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+    ];
+
+    for &mark in &[PLAYER_O, PLAYER_X] {
+        for line in &wins {
+            let cells = [board[line[0]], board[line[1]], board[line[2]]];
+            let count_mark = cells.iter().filter(|&&c| c == mark).count();
+            let empties: Vec<usize> = line
+                .iter()
+                .cloned()
+                .filter(|&i| board[i] != PLAYER_X && board[i] != PLAYER_O)
+                .collect();
+            if count_mark == 2 && !empties.is_empty() {
+                return empties[0];
+            }
+        }
+    }
+
+    get_ai_move_random(board)
 }
 
 // ======================================
 // GAME LOGIC
 // ======================================
 
-fn check_winner(board: &[char;9]) -> Option<(char, [usize;3])> {
-    for &line in &WIN_LINES {
-        if board[line[0]]==board[line[1]] && board[line[1]]==board[line[2]]
-            && (board[line[0]]==PLAYER_X || board[line[0]]==PLAYER_O) {
+fn check_winner(board: &[char; 9]) -> Option<(char, [usize; 3])> {
+    let wins = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+    ];
+
+    for &line in &wins {
+        if board[line[0]] == board[line[1]]
+            && board[line[1]] == board[line[2]]
+            && (board[line[0]] == PLAYER_X || board[line[0]] == PLAYER_O)
+        {
             return Some((board[line[0]], line));
         }
     }
